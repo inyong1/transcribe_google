@@ -29,7 +29,7 @@ language_code = "en-US"  # Ganti ke "id-ID" kalau Bahasa Indonesia
 config = speech.RecognitionConfig(
     encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
     sample_rate_hertz=sample_rate,
-    language_code="en-US",  # Ganti dengan kode bahasa yang sesuai
+    language_code=language_code,  # Ganti dengan kode bahasa yang sesuai
     model="latest_long",  # Menggunakan model yang dioptimalkan untuk transkripsi berkelanjutan
     max_alternatives=1,
 )
@@ -47,27 +47,32 @@ def audio_callback(indata, frames, time_, status):
 
 
 def mic_stream_generator():
+    text_queue_for_gui.put(
+        "================= start listening =====================")
+    print(f"stop flag is {stop_flag}")
     while not stop_flag:
         try:
             chunk = audio_queue.get(timeout=0.5)  # Timeout 0.5 detik
             yield speech.StreamingRecognizeRequest(audio_content=chunk.tobytes())
         except queue.Empty:
             continue  # Lanjutkan loop jika queue kosong
+    text_queue_for_gui.put(
+        "================= stop listening =====================")
 
 
 def transcribe_from_microphone():
     """Merekam audio dari mikrofon dan mengirimkannya ke Speech-to-Text."""
     try:
+        text_queue_for_gui.put(
+            "================= ▶️ started =====================")
+        text_queue_interim.put(
+            "================= ▶️ started =====================")
         with sd.InputStream(samplerate=sample_rate, channels=1, dtype='int16', callback=audio_callback):
             # Mulai streaming request
             requests = mic_stream_generator()
             responses = client.streaming_recognize(
                 config=streaming_config, requests=requests)
 
-            text_queue_for_gui.put(
-                "================= ▶️ started =====================")
-            text_queue_interim.put(
-                "================= ▶️ started =====================")
             for response in responses:
                 if stop_flag:
                     break
@@ -125,7 +130,7 @@ class TextDisplayGUI:
 
         # Panel atas untuk teks interim
         self.text_area_interim = scrolledtext.ScrolledText(
-            root, wrap=tk.WORD, width=80, height=4, font=("Arial", 15),bg="#ADFFF5")
+            root, wrap=tk.WORD, width=80, height=4, font=("Arial", 15), bg="#ADFFF5")
         self.text_area_interim.pack(padx=10, pady=5)
 
         # Panel atas untuk teks dari split_text_queue
@@ -136,15 +141,16 @@ class TextDisplayGUI:
         # Panel bawah untuk teks dari translated_text_queue
         self.text_area_translated = scrolledtext.ScrolledText(
             root, wrap=tk.WORD, width=80, height=12, font=("Arial", 15))
-        self.text_area_translated.tag_configure("translated_text", foreground="#007A37", font=("Arial", 15, "bold"))
+        self.text_area_translated.tag_configure(
+            "translated_text", foreground="#007A37", font=("Arial", 15, "bold"))
         self.text_area_translated.pack(padx=10, pady=5)
 
         # Jalankan fungsi update UI secara berkala
         self.update_ui()
 
     def start_processes(self):
+        global threads, stop_flag
         stop_flag = False
-        global threads
         if not threads:  # Cegah memulai ulang thread yang sudah berjalan
             threads = [
                 threading.Thread(target=transcribe_from_microphone),
@@ -188,7 +194,7 @@ class TextDisplayGUI:
         while not translated_text_queue.empty():
             translated_sentence = translated_text_queue.get()
             self.text_area_translated.insert(
-                tk.END, translated_sentence + "\n","translated_text")
+                tk.END, translated_sentence + "\n", "translated_text")
             self.text_area_translated.see(tk.END)  # scroll otomatis ke bawah
 
         self.root.after(500, self.update_ui)  # cek ulang tiap 500ms
@@ -204,7 +210,7 @@ def translator_thread():
     while not stop_flag:
         if not text_queue.empty():
             sentence = text_queue.get()
-            prompt = f"Terjemahkan kalimat ini ke dalam Bahasa Indonesia:\n\"{sentence}\""
+            prompt = f"Terjemahkan kalimat ini ke dalam Bahasa Indonesia dalam konteks agama:\n\"{sentence}\""
 
             response = openai.chat.completions.create(model="gpt-3.5-turbo",  # "gpt-4",  #
                                                       messages=[
@@ -218,7 +224,8 @@ def translator_thread():
             text_queue.task_done()
         else:
             time.sleep(1)
-    translated_text_queue.put("================= ⏹️ stopped ====================")
+    translated_text_queue.put(
+        "================= ⏹️ stopped ====================")
 
 
 if __name__ == "__main__":
